@@ -74,6 +74,7 @@ init script only rewrites the keys it manages (see below) inside the
 | `UE4SS_FORCE_REINSTALL` | `false` | | When `true`, re-download and re-extract UE4SS on boot regardless of the install marker (use for one boot to refresh the rolling tag), then revert to `false`. |
 | `MODS` | (empty) | | Declarative pak mod list, see Mods. |
 | `UE4SS_MODS` | (empty) | | Declarative UE4SS mod list, see Mods. |
+| `PALSCHEMA_MODS` | (empty) | | Declarative PalSchema sub-mod list, see Mods. |
 | `WINEPREFIX` | `/palworld/.wine` | | Wine prefix location (on the persistent volume). |
 
 RCON is deprecated upstream in favor of the REST API; this image does not
@@ -154,3 +155,29 @@ installing PalSchema:
 
 Requires `UE4SS_ENABLED=true`; if UE4SS is disabled, `UE4SS_MODS` is
 ignored with a warning.
+
+### PalSchema sub-mods (`PALSCHEMA_MODS`)
+
+[PalSchema](https://github.com/PalSchema/PalSchema) is itself a UE4SS mod
+(install it via `UE4SS_MODS`, see above); it in turn loads its own sub-mods
+from `Pal/Binaries/Win64/ue4ss/Mods/PalSchema/mods/`. `PALSCHEMA_MODS` is a
+third, independent declarative list for those sub-mods, same `name@url`
+zip format and same manifest-based reconcile as `MODS`/`UE4SS_MODS`
+(manifest: `/palworld/.palschema-mods-manifest`). The sub-mod zip must
+contain the mod folder's contents directly (they are extracted into
+`<name>/`, not `<name>/<name>/`).
+
+Example, installing PalSchema itself plus one of its sub-mods:
+
+```
+-e UE4SS_MODS="PalSchema@https://example.invalid/PalSchema.zip" \
+-e PALSCHEMA_MODS="SomeSchemaMod@https://example.invalid/SomeSchemaMod.zip"
+```
+
+Reconciled after `UE4SS_MODS` on every boot. If `PALSCHEMA_MODS` is set but
+PalSchema itself is not installed (missing from `UE4SS_MODS` or not yet
+downloaded), the init script logs a warning and still installs the sub-mod
+files - they are inert until PalSchema is present, so this is safe to leave
+declared ahead of adding PalSchema.
+
+Like `UE4SS_MODS`, this requires `UE4SS_ENABLED=true`.

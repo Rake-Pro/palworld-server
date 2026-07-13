@@ -201,25 +201,24 @@ fi
 
 #================================================================
 # 6. Declarative mod reconcile.
-#    reconcile_mods <manifest> <kind> <entries...>
+#    reconcile_mods <manifest> <kind> <mods_root> <entries...>
 #    - pak entries: name@url, or logicmods:name@url to target LogicMods
-#      instead of ~mods. url may be a direct .pak or a .zip.
-#    - ue4ss entries: name@url where url is a zip extracted into ue4ss/Mods.
+#      instead of ~mods (both under mods_root). url may be a direct .pak or a
+#      .zip.
+#    - ue4ss / palschema entries: name@url where url is a zip extracted
+#      directly into mods_root/<name>.
 #    - every install is recorded in the manifest as "name<TAB>dir". Entries
 #      dropped from the env list have their recorded dir removed. Nothing
 #      outside the manifest is ever deleted, so hand-installed mods survive.
+#    Shared by all three declarative lists (MODS, UE4SS_MODS, PALSCHEMA_MODS);
+#    only the pak kind has ~mods/LogicMods subdirs, every other kind installs
+#    flat under mods_root.
 #================================================================
 reconcile_mods() {
-    local manifest="$1" kind="$2"; shift 2
-    local paks_root="$INSTALL_DIR/Pal/Content/Paks"
+    local manifest="$1" kind="$2" mods_root="$3"; shift 3
     # The root every install for this kind must live under. The removal pass
     # refuses to rm anything that resolves outside it (legacy/corrupt manifest).
-    local mods_root resolved_root
-    if [ "$kind" = "pak" ]; then
-        mods_root="$paks_root"
-    else
-        mods_root="$UE4SS_MODS_DIR"
-    fi
+    local resolved_root
     resolved_root="$(realpath -m "$mods_root")"
 
     # Phase 1: parse and validate every entry BEFORE any filesystem write.
@@ -230,13 +229,12 @@ reconcile_mods() {
     for entry in "$@"; do
         [ -z "$entry" ] && continue
         raw="$entry"
-        dest_root="$paks_root/~mods"
+        dest_root="$mods_root"
         if [ "$kind" = "pak" ]; then
+            dest_root="$mods_root/~mods"
             case "$raw" in
-                logicmods:*) raw="${raw#logicmods:}"; dest_root="$paks_root/LogicMods";;
+                logicmods:*) raw="${raw#logicmods:}"; dest_root="$mods_root/LogicMods";;
             esac
-        else
-            dest_root="$UE4SS_MODS_DIR"
         fi
         if [[ "$raw" != *@* ]]; then
             LogError "[$kind] malformed entry '$entry' (expected name@url)"
@@ -321,17 +319,32 @@ reconcile_mods() {
     mv "$tmpm" "$manifest"
 }
 
+PAKS_ROOT="$INSTALL_DIR/Pal/Content/Paks"
+# PalSchema itself arrives via UE4SS_MODS (it is a ue4ss Lua mod); its own
+# sub-mods live one level deeper, under its mods/ folder.
+PALSCHEMA_MODS_DIR="$UE4SS_MODS_DIR/PalSchema/mods"
+
 LogAction "Reconciling pak mods (MODS)"
 # shellcheck disable=SC2086
-reconcile_mods "$INSTALL_DIR/.mods-manifest" pak $MODS
+reconcile_mods "$INSTALL_DIR/.mods-manifest" pak "$PAKS_ROOT" $MODS
 
 if [ "$UE4SS_ENABLED" = "true" ]; then
     LogAction "Reconciling UE4SS mods (UE4SS_MODS)"
     mkdir -p "$UE4SS_MODS_DIR"
     # shellcheck disable=SC2086
-    reconcile_mods "$INSTALL_DIR/.ue4ss-mods-manifest" ue4ss $UE4SS_MODS
-elif [ -n "$(printf '%s' "$UE4SS_MODS" | tr -d '[:space:]')" ]; then
-    LogWarn "UE4SS_MODS set but UE4SS_ENABLED != true; ignoring UE4SS_MODS"
+    reconcile_mods "$INSTALL_DIR/.ue4ss-mods-manifest" ue4ss "$UE4SS_MODS_DIR" $UE4SS_MODS
+
+    # PalSchema sub-mods (PALSCHEMA_MODS), reconciled AFTER UE4SS_MODS above
+    # since PalSchema itself is delivered through that list.
+    if [ -n "$(printf '%s' "$PALSCHEMA_MODS" | tr -d '[:space:]')" ] && [ ! -d "$UE4SS_MODS_DIR/PalSchema" ]; then
+        LogWarn "PALSCHEMA_MODS set but PalSchema is not installed under ue4ss/Mods (hint: add PalSchema to UE4SS_MODS); installing the sub-mod files anyway, they stay inert until PalSchema is present"
+    fi
+    LogAction "Reconciling PalSchema sub-mods (PALSCHEMA_MODS)"
+    mkdir -p "$PALSCHEMA_MODS_DIR"
+    # shellcheck disable=SC2086
+    reconcile_mods "$INSTALL_DIR/.palschema-mods-manifest" palschema "$PALSCHEMA_MODS_DIR" $PALSCHEMA_MODS
+elif [ -n "$(printf '%s' "$UE4SS_MODS$PALSCHEMA_MODS" | tr -d '[:space:]')" ]; then
+    LogWarn "UE4SS_MODS/PALSCHEMA_MODS set but UE4SS_ENABLED != true; ignoring"
 fi
 
 #================================================================

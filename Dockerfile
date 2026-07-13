@@ -67,6 +67,7 @@ ENV STEAMAPPID=2394010 \
     UE4SS_FORCE_REINSTALL=false \
     MODS="" \
     UE4SS_MODS="" \
+    PALSCHEMA_MODS="" \
     WINEPREFIX=/palworld/.wine \
     DISPLAY=:99
 
