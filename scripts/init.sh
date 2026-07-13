@@ -4,8 +4,10 @@
 # no matching process, wineserver -k, killing Xvfb - and `wait "$child"`
 # itself returns 143 once the trap fires. Under set -e any of those would abort
 # the handler partway, skipping wineserver -k and the Xvfb kill, i.e. skipping
-# shutdown cleanup. set -u + pipefail give the safety we want without that.
-set -uo pipefail
+# shutdown cleanup.
+# set -u is also off: the base image's functions.sh Log() reads $3/$4 that the
+# LogInfo/LogError wrappers never pass, which is fatal under nounset.
+set -o pipefail
 # shellcheck source=/dev/null
 source /opt/scripts/functions.sh
 
