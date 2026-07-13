@@ -17,8 +17,16 @@ RUN apt-get update && apt-get upgrade -y \
       xvfb \
       winbind \
       cabextract \
-      winetricks \
+      wget \
  && rm -rf /var/lib/apt/lists/*
+
+# winetricks has no bookworm apt candidate (dropped from Debian stable);
+# install the pinned upstream release script instead. wget above is its
+# preferred downloader, cabextract its extractor.
+ARG WINETRICKS_VERSION=20260125
+RUN curl -fsSL "https://raw.githubusercontent.com/Winetricks/winetricks/${WINETRICKS_VERSION}/src/winetricks" \
+      -o /usr/local/bin/winetricks \
+ && chmod 0755 /usr/local/bin/winetricks
 
 # WineHQ repo (deb822 .sources file per the official install docs; i386 arch
 # is already enabled by the base image). winehq-stable is installed WITH
