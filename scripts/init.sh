@@ -59,16 +59,37 @@ steam_update() {
         +@sSteamCmdForcePlatformType windows \
         +force_install_dir "$INSTALL_DIR" \
         +login anonymous \
+        "$@" \
         +app_update "$STEAMAPPID" validate \
         +quit
 }
 
+# steamcmd sometimes fails the first pull of a platform-forced depot with
+# "Missing configuration" (stale/unpopulated appinfo cache), and it can exit 0
+# on failure - so success is judged by the server exe existing, not the exit
+# code. Retry with the appcache cleared and an explicit appinfo refresh.
+steam_update_with_retry() {
+    local attempt
+    for attempt in 1 2 3; do
+        if [ "$attempt" -gt 1 ]; then
+            LogWarn "steamcmd attempt $((attempt - 1)) did not produce $SERVER_EXE; clearing appcache and retrying"
+            rm -rf /home/steam/Steam/appcache
+            steam_update +app_info_update 1
+        else
+            steam_update
+        fi
+        [ -f "$SERVER_EXE" ] && return 0
+    done
+    LogError "steamcmd failed to install app $STEAMAPPID after 3 attempts"
+    return 1
+}
+
 if [ "$SKIPUPDATE" != "true" ]; then
     LogAction "Installing/updating Palworld Windows build (app id $STEAMAPPID)"
-    steam_update
+    steam_update_with_retry
 elif [ ! -f "$SERVER_EXE" ]; then
     LogWarn "SKIPUPDATE=true but the server binary is missing; installing anyway"
-    steam_update
+    steam_update_with_retry
 else
     LogWarn "SKIPUPDATE=true, not updating the game"
 fi
