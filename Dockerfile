@@ -39,6 +39,10 @@ RUN mkdir -pm755 /etc/apt/keyrings \
       -o /etc/apt/sources.list.d/winehq-bookworm.sources \
  && apt-get update \
  && apt-get install -y --install-recommends "winehq-stable=${WINE_VERSION}" \
+ # ipp-usb (USB printer daemon, stale Go stdlib CRITICALs) rides in via the
+ # recommends chain; useless here and it trips the Trivy gate.
+ && apt-get purge -y ipp-usb \
+ && apt-get autoremove -y --purge \
  && rm -rf /var/lib/apt/lists/*
 
 # Palworld dedicated server app id (Windows depot pulled via
