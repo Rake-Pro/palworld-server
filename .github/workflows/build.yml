@@ -1,0 +1,125 @@
+name: Build & Push Palworld Server Image
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: palworld-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: rake-pro/palworld-server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # github-tag-action has no initial_version input; without a seed the
+      # first main build would tag v0.0.1. Seed 1.0.0 when no v* tag exists.
+      - name: Seed first version
+        id: seed
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          if [ -z "$(git ls-remote --tags origin 'refs/tags/v*')" ]; then
+            echo "custom_tag=1.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Dry run only: computes the next vX.Y.Z so it can be baked into the
+      # image tags at build time. The real git tag is created after the
+      # Trivy gate passes. Empty custom_tag input is treated as unset.
+      - name: Compute next version (dry run)
+        id: version
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          custom_tag: ${{ steps.seed.outputs.custom_tag }}
+          dry_run: true
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=sha,format=short,enable=${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+            type=raw,value=${{ steps.version.outputs.new_tag || 'noop' }},enable=${{ steps.version.outputs.new_tag != '' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (local, for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan (report, non-blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+      - name: Trivy scan (gate, blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          format: table
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      # Only after the CRITICAL gate passes; custom_tag pins the exact
+      # version already baked into the image tags by the dry run above.
+      - name: Create and push version tag
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          custom_tag: ${{ steps.version.outputs.new_version }}
+
+      - name: Push (amd64)
+        uses: docker/build-push-action@v6
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
