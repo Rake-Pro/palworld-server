@@ -1,2 +1,9 @@
 *.log
 .DS_Store
+
+# tests/run_all.sh scratch artifacts (throwaway trees the harnesses build
+# and tear down per run; not always fully cleaned up if a run is killed)
+tests/sandbox*
+tests/ue4ss_sandbox/
+tests/victim_outside/
+tests/dlcount

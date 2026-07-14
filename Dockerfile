@@ -68,6 +68,7 @@ ENV STEAMAPPID=2394010 \
     MODS="" \
     UE4SS_MODS="" \
     PALSCHEMA_MODS="" \
+    TAIL_GAME_LOGS=true \
     WINEPREFIX=/palworld/.wine \
     DISPLAY=:99
 

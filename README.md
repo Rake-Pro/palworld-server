@@ -76,6 +76,7 @@ init script only rewrites the keys it manages (see below) inside the
 | `UE4SS_MODS` | (empty) | | Declarative UE4SS mod list, see Mods. |
 | `PALSCHEMA_MODS` | (empty) | | Declarative PalSchema sub-mod list, see Mods. |
 | `WINEPREFIX` | `/palworld/.wine` | | Wine prefix location (on the persistent volume). |
+| `TAIL_GAME_LOGS` | `true` | | Tail the UE4SS and Pal server log files into the container's own stdout (prefixed `[ue4ss]`/`[pal]`), see Logs. |
 
 RCON is deprecated upstream in favor of the REST API; this image does not
 configure or manage it.
@@ -146,8 +147,14 @@ rebuilt.
 
 Space-separated `name@url` entries where `url` is a zip, extracted into
 `Pal/Binaries/Win64/ue4ss/Mods/<name>/`. Same manifest-based declarative
-reconcile as `MODS` (manifest: `/palworld/.ue4ss-mods-manifest`). Example,
-installing PalSchema:
+reconcile as `MODS` (manifest: `/palworld/.ue4ss-mods-manifest`).
+
+Most Nexus/GitHub zips wrap their payload in a single top-level folder
+(`SomeMod-1.2.3/...`); the init script auto-detects that exact shape after
+extraction (extraction produced exactly one entry and it's a real directory,
+ignoring `__MACOSX`/`.DS_Store` junk) and flattens it so `<name>/` ends up
+holding the mod's files directly. Already-flat zips are left untouched.
+Example, installing PalSchema:
 
 ```
 -e UE4SS_MODS="PalSchema@https://github.com/PalSchema/PalSchema/releases/download/<version>/PalSchema.zip"
@@ -163,9 +170,9 @@ ignored with a warning.
 from `Pal/Binaries/Win64/ue4ss/Mods/PalSchema/mods/`. `PALSCHEMA_MODS` is a
 third, independent declarative list for those sub-mods, same `name@url`
 zip format and same manifest-based reconcile as `MODS`/`UE4SS_MODS`
-(manifest: `/palworld/.palschema-mods-manifest`). The sub-mod zip must
-contain the mod folder's contents directly (they are extracted into
-`<name>/`, not `<name>/<name>/`).
+(manifest: `/palworld/.palschema-mods-manifest`). Same wrapper-strip as
+`UE4SS_MODS` applies: a zip that wraps the sub-mod in a single top-level
+folder is flattened into `<name>/`; an already-flat zip is untouched.
 
 Example, installing PalSchema itself plus one of its sub-mods:
 
@@ -181,3 +188,21 @@ files - they are inert until PalSchema is present, so this is safe to leave
 declared ahead of adding PalSchema.
 
 Like `UE4SS_MODS`, this requires `UE4SS_ENABLED=true`.
+
+## Logs
+
+By default (`TAIL_GAME_LOGS=true`) the init script tails the game's own log
+files into the container's stdout once the server has launched, so `kubectl
+logs` / `docker logs` carries them alongside the wine/steamcmd boot output
+without needing to exec into the pod:
+
+| Prefix | File |
+| --- | --- |
+| `[ue4ss]` | `Pal/Binaries/Win64/ue4ss/UE4SS.log` - also carries PalSchema's output, since PalSchema is a UE4SS mod and logs through UE4SS's own logger rather than a separate file. |
+| `[pal]` | `Pal/Saved/Logs/PalServer.log` |
+
+Each tail uses `tail -F -n0`: `-F` follows by name and retries, so it is safe
+to start before the file exists yet and survives log rotation; `-n0` skips
+replaying old content, so a restart does not flood the logs with history.
+Set `TAIL_GAME_LOGS=false` to disable and rely on the main server stdout
+only.

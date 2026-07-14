@@ -200,13 +200,50 @@ else
 fi
 
 #================================================================
+# 5b. Zip wrapper-strip for ue4ss/palschema mod installs.
+#    Nexus/GitHub zips usually wrap their payload in a single top-level
+#    folder (e.g. "SomeMod-1.2.3/..."); this image installs mods flat
+#    (mods_root/<name>/...), so a wrapped zip leaves the real files one
+#    level too deep. strip_zip_wrapper collapses that shape when, and only
+#    when, extraction produced EXACTLY one root entry and it is a real
+#    directory (not a symlink) - i.e. it never touches an already-flat zip
+#    (the repacked ones on the cdn included) or a zip whose single root
+#    entry is a plain file.
+#================================================================
+strip_zip_wrapper() {
+    local target="$1"
+
+    # Junk extraction artifacts never count toward "exactly one entry" and
+    # are removed either way.
+    find "$target" -mindepth 1 -maxdepth 1 \( -name '__MACOSX' -o -name '.DS_Store' \) -exec rm -rf -- {} +
+
+    local entries=() entry
+    while IFS= read -r -d '' entry; do
+        entries+=("$entry")
+    done < <(find "$target" -mindepth 1 -maxdepth 1 -print0)
+
+    [ "${#entries[@]}" -eq 1 ] || return 0
+    local only="${entries[0]}"
+    # A symlink is never treated as the wrapper, even if it points at a
+    # directory: "moving its contents" would mean following it outside
+    # $target, which is exactly what must not happen.
+    [ -L "$only" ] && return 0
+    [ -d "$only" ] || return 0
+
+    LogInfo "Stripping single wrapper directory '$(basename "$only")' from $target"
+    find "$only" -mindepth 1 -maxdepth 1 -exec mv -- {} "$target"/ \;
+    rmdir "$only"
+}
+
+#================================================================
 # 6. Declarative mod reconcile.
 #    reconcile_mods <manifest> <kind> <mods_root> <entries...>
 #    - pak entries: name@url, or logicmods:name@url to target LogicMods
 #      instead of ~mods (both under mods_root). url may be a direct .pak or a
 #      .zip.
 #    - ue4ss / palschema entries: name@url where url is a zip extracted
-#      directly into mods_root/<name>.
+#      directly into mods_root/<name>. A single-wrapper-dir zip shape is
+#      auto-flattened (see strip_zip_wrapper); pak zips are left as-is.
 #    - every install is recorded in the manifest as "name<TAB>dir". Entries
 #      dropped from the env list have their recorded dir removed. Nothing
 #      outside the manifest is ever deleted, so hand-installed mods survive.
@@ -274,6 +311,9 @@ reconcile_mods() {
             *.zip)
                 if curl -fsSL "$url" -o "$tmp/mod.zip" && unzip -oq "$tmp/mod.zip" -d "$target"; then
                     ok=true
+                    case "$kind" in
+                        ue4ss|palschema) strip_zip_wrapper "$target" ;;
+                    esac
                 fi
                 ;;
             *)
@@ -391,6 +431,25 @@ if [ "$x_ready" != "true" ]; then
 fi
 LogInfo "Xvfb display $DISPLAY ready"
 
+#================================================================
+# 7b. File-log tailing into stdout (TAIL_GAME_LOGS, default true).
+#    tail -F (follow-by-name + retry) survives both log rotation and a file
+#    that does not exist yet, so sources can be started before the server
+#    has written a single line. -n0 skips historical replay so a restart
+#    does not flood pod logs with old lines. Each source is prefixed so pod
+#    logs stay attributable; PalSchema is a UE4SS Lua mod and logs through
+#    UE4SS's own logger (no separate log file), so its output already
+#    arrives via the [ue4ss] tail - there is no distinct palschema log path
+#    to add.
+#================================================================
+TAIL_GAME_LOGS="${TAIL_GAME_LOGS:-true}"
+tail_pids=()
+start_log_tail() {
+    local prefix="$1" path="$2"
+    tail -F -n0 "$path" 2>/dev/null > >(sed -u "s/^/[${prefix}] /") &
+    tail_pids+=("$!")
+}
+
 child=""
 # shellcheck disable=SC2317  # invoked indirectly via the SIGTERM trap
 term_handler() {
@@ -399,6 +458,10 @@ term_handler() {
     wait "${child:-}" 2>/dev/null
     wineserver -k 2>/dev/null
     kill "$xvfb_pid" 2>/dev/null
+    local tail_pid
+    for tail_pid in "${tail_pids[@]}"; do
+        kill "$tail_pid" 2>/dev/null
+    done
 }
 trap 'term_handler' SIGTERM
 
@@ -406,4 +469,13 @@ LogAction "Starting Palworld dedicated server under wine"
 cd "$INSTALL_DIR" || exit 1
 wine "$SERVER_EXE" "${FLAGS[@]}" &
 child=$!
+
+if [ "$TAIL_GAME_LOGS" = "true" ]; then
+    LogInfo "Tailing game/mod logs into stdout (TAIL_GAME_LOGS=true)"
+    start_log_tail ue4ss "$UE4SS_DIR/ue4ss/UE4SS.log"
+    start_log_tail pal   "$INSTALL_DIR/Pal/Saved/Logs/PalServer.log"
+else
+    LogInfo "TAIL_GAME_LOGS != true; not tailing game/mod logs"
+fi
+
 wait "$child"
