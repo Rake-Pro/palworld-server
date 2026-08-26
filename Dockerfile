@@ -41,18 +41,21 @@ RUN mkdir -pm755 /etc/apt/keyrings \
  && apt-get install -y --install-recommends "winehq-stable=${WINE_VERSION}" \
  # ipp-usb (USB printer daemon, stale Go stdlib CRITICALs) rides in via the
  # recommends chain; useless here and it trips the Trivy gate. Same story for
- # the rest of the purge list: media/print/crypto extras the recommends chain
- # drags in that a headless dedicated server never touches (ffmpeg codecs,
- # gnupg suite, CUPS, HEIF/TIFF decoders, LMDB). gpgv stays - apt needs it
- # for repo signature verification. The dpkg -s assert fails the build if a
- # purge ever cascades into wine itself.
+ # the gnupg suite and CUPS (+ the gtk3/poppler chain cups drags along): a
+ # headless dedicated server never touches them. gpgv stays - apt needs it
+ # for repo signature verification.
+ # Do NOT add the other CVE-heavy recommends to this list: wine-stable-amd64
+ # hard-Depends on libasound2-plugins (-> libavcodec/libavutil/libswresample)
+ # and libsane1/libgphoto2 (-> libgd -> libtiff6/libde265-0), and winbind
+ # needs samba-libs -> libldb2 -> liblmdb0. Purging any of those cascades
+ # into wine/winbind; the dpkg -s asserts fail the build if that regresses.
  && apt-get purge -y \
       ipp-usb \
-      'libavcodec*' 'libavutil*' 'libswresample*' \
       gnupg dirmngr gpg-wks-client gpgsm \
-      libcups2t64 libde265-0 libtiff6 liblmdb0 \
+      libcups2t64 \
  && apt-get autoremove -y --purge \
  && dpkg -s winehq-stable > /dev/null \
+ && dpkg -s winbind > /dev/null \
  && rm -rf /var/lib/apt/lists/*
 
 # Palworld dedicated server app id (Windows depot pulled via
