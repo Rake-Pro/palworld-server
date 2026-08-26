@@ -41,18 +41,18 @@ RUN mkdir -pm755 /etc/apt/keyrings \
  && apt-get install -y --install-recommends "winehq-stable=${WINE_VERSION}" \
  # ipp-usb (USB printer daemon, stale Go stdlib CRITICALs) rides in via the
  # recommends chain; useless here and it trips the Trivy gate. Same story for
- # the gnupg suite and CUPS (+ the gtk3/poppler chain cups drags along): a
- # headless dedicated server never touches them. gpgv stays - apt needs it
- # for repo signature verification.
- # Do NOT add the other CVE-heavy recommends to this list: wine-stable-amd64
- # hard-Depends on libasound2-plugins (-> libavcodec/libavutil/libswresample)
- # and libsane1/libgphoto2 (-> libgd -> libtiff6/libde265-0), and winbind
- # needs samba-libs -> libldb2 -> liblmdb0. Purging any of those cascades
- # into wine/winbind; the dpkg -s asserts fail the build if that regresses.
+ # the gnupg suite: a headless dedicated server never touches it. gpgv stays
+ # - apt needs it for repo signature verification.
+ # Do NOT add the other CVE-heavy recommends to this list, they are all hard
+ # dependency chains (CI-verified 2026-08-26): wine-stable-amd64 Depends on
+ # libasound2-plugins (-> libavcodec/libavutil/libswresample) and
+ # libsane1/libgphoto2 (-> libgd -> libtiff6/libde265-0); winbind needs
+ # samba-libs, which Depends on BOTH liblmdb0 (via libldb2) AND libcups2t64.
+ # Purging any of those cascades into wine/winbind; the dpkg -s asserts fail
+ # the build if that regresses.
  && apt-get purge -y \
       ipp-usb \
       gnupg dirmngr gpg-wks-client gpgsm \
-      libcups2t64 \
  && apt-get autoremove -y --purge \
  && dpkg -s winehq-stable > /dev/null \
  && dpkg -s winbind > /dev/null \
