@@ -40,9 +40,22 @@ RUN mkdir -pm755 /etc/apt/keyrings \
  && apt-get update \
  && apt-get install -y --install-recommends "winehq-stable=${WINE_VERSION}" \
  # ipp-usb (USB printer daemon, stale Go stdlib CRITICALs) rides in via the
- # recommends chain; useless here and it trips the Trivy gate.
- && apt-get purge -y ipp-usb \
+ # recommends chain; useless here and it trips the Trivy gate. Same story for
+ # the gnupg suite: a headless dedicated server never touches it. gpgv stays
+ # - apt needs it for repo signature verification.
+ # Do NOT add the other CVE-heavy recommends to this list, they are all hard
+ # dependency chains (CI-verified 2026-08-26): wine-stable-amd64 Depends on
+ # libasound2-plugins (-> libavcodec/libavutil/libswresample) and
+ # libsane1/libgphoto2 (-> libgd -> libtiff6/libde265-0); winbind needs
+ # samba-libs, which Depends on BOTH liblmdb0 (via libldb2) AND libcups2t64.
+ # Purging any of those cascades into wine/winbind; the dpkg -s asserts fail
+ # the build if that regresses.
+ && apt-get purge -y \
+      ipp-usb \
+      gnupg dirmngr gpg-wks-client gpgsm \
  && apt-get autoremove -y --purge \
+ && dpkg -s winehq-stable > /dev/null \
+ && dpkg -s winbind > /dev/null \
  && rm -rf /var/lib/apt/lists/*
 
 # Palworld dedicated server app id (Windows depot pulled via
