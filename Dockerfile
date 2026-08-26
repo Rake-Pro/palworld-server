@@ -40,9 +40,19 @@ RUN mkdir -pm755 /etc/apt/keyrings \
  && apt-get update \
  && apt-get install -y --install-recommends "winehq-stable=${WINE_VERSION}" \
  # ipp-usb (USB printer daemon, stale Go stdlib CRITICALs) rides in via the
- # recommends chain; useless here and it trips the Trivy gate.
- && apt-get purge -y ipp-usb \
+ # recommends chain; useless here and it trips the Trivy gate. Same story for
+ # the rest of the purge list: media/print/crypto extras the recommends chain
+ # drags in that a headless dedicated server never touches (ffmpeg codecs,
+ # gnupg suite, CUPS, HEIF/TIFF decoders, LMDB). gpgv stays - apt needs it
+ # for repo signature verification. The dpkg -s assert fails the build if a
+ # purge ever cascades into wine itself.
+ && apt-get purge -y \
+      ipp-usb \
+      'libavcodec*' 'libavutil*' 'libswresample*' \
+      gnupg dirmngr gpg-wks-client gpgsm \
+      libcups2t64 libde265-0 libtiff6 liblmdb0 \
  && apt-get autoremove -y --purge \
+ && dpkg -s winehq-stable > /dev/null \
  && rm -rf /var/lib/apt/lists/*
 
 # Palworld dedicated server app id (Windows depot pulled via
