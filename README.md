@@ -37,11 +37,16 @@ docker run -d --name palworld \
 
 On boot the container initializes a Wine prefix at `/palworld/.wine` if
 missing (one-time `wineboot` + `vcrun2022`), installs/updates the Palworld
-**Windows** build via SteamCMD (app id `2394010`, forced Windows platform)
-unless `SKIPUPDATE=true`, seeds and patches `PalWorldSettings.ini` from the
-environment, installs UE4SS and any declared mods, then launches
-`PalServer-Win64-Shipping-Cmd.exe` under Wine (a minimal Xvfb display is
-started for Wine; the server itself is headless).
+**Windows** build via SteamCMD (app id `2394010`, forced Windows platform via
+`STEAM_PLATFORM_TYPE=windows`) unless `SKIPUPDATE=true`, seeds and patches
+`PalWorldSettings.ini` from the environment, installs UE4SS and any declared
+mods, then launches `PalServer-Win64-Shipping-Cmd.exe` under Wine (a minimal
+Xvfb display is started for Wine; the server itself is headless).
+
+The install/update itself runs through the `steamcmd-base` image's
+`steamcmd_update` helper, which retries automatically (clearing the SteamCMD
+appcache between attempts) if the first pull of the platform-forced depot
+fails - see the `steamcmd-base` README for the retry/env details.
 
 `ADMIN_PASSWORD` is required and has no default - it is the in-game admin
 password and the HTTP basic-auth secret for the REST API. The container
@@ -55,6 +60,7 @@ init script only rewrites the keys it manages (see below) inside the
 
 | Variable | Default | Required | Purpose |
 | --- | --- | --- | --- |
+| `STEAM_PLATFORM_TYPE` | `windows` (fixed) | | Set by the Dockerfile so the base image's SteamCMD helpers pull the Windows depot. Not meant to be overridden. |
 | `SKIPUPDATE` | `false` | | Skip the SteamCMD update on boot (still installs if the server binary is missing). |
 | `SERVER_NAME` | `Palworld Server` | | Public server name (`ServerName`). |
 | `SERVER_DESCRIPTION` | (empty) | | Server description (`ServerDescription`). |

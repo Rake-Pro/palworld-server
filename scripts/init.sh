@@ -5,8 +5,8 @@
 # itself returns 143 once the trap fires. Under set -e any of those would abort
 # the handler partway, skipping wineserver -k and the Xvfb kill, i.e. skipping
 # shutdown cleanup.
-# set -u is also off: the base image's functions.sh Log() reads $3/$4 that the
-# LogInfo/LogError wrappers never pass, which is fatal under nounset.
+# set -u is also off: several optional env vars and $child are read before
+# they are guaranteed to be set, and the handler must not die on them.
 set -o pipefail
 # shellcheck source=/dev/null
 source /opt/scripts/functions.sh
@@ -50,46 +50,39 @@ fi
 
 #================================================================
 # 2. Install/update the Windows server build via SteamCMD.
-#    The base steamcmd_update helper does not set the platform type, so the
-#    Windows depot has to be pulled by invoking steamcmd.sh directly with
-#    +@sSteamCmdForcePlatformType windows BEFORE login.
+#    STEAM_PLATFORM_TYPE=windows (set in the Dockerfile) makes the base
+#    steamcmd_update/steamcmd_run helpers force the Windows platform type
+#    (+@sSteamCmdForcePlatformType) before login, so the Windows depot is
+#    pulled through the shared helper instead of a local steamcmd.sh call.
+#    steamcmd_update already retries on failure (STEAMCMD_RETRIES, default
+#    3, clearing the appcache and forcing +app_info_update between attempts)
+#    and judges success via the app manifest (steamcmd_installed) rather
+#    than steamcmd's unreliable exit code - see steamcmd-base/functions.sh.
+#    This script still checks for $SERVER_EXE: the manifest only says the
+#    depot is installed, and $SERVER_EXE is the actual binary wine launches,
+#    so the exe check stays the authoritative success signal here. If the
+#    helper reports success but the exe is missing (wrong depot laid down),
+#    clear the appcache and run the helper once more before giving up.
 #================================================================
-steam_update() {
-    /home/steam/steamcmd/steamcmd.sh \
-        +@sSteamCmdForcePlatformType windows \
-        +force_install_dir "$INSTALL_DIR" \
-        +login anonymous \
-        "$@" \
-        +app_update "$STEAMAPPID" validate \
-        +quit
-}
-
-# steamcmd sometimes fails the first pull of a platform-forced depot with
-# "Missing configuration" (stale/unpopulated appinfo cache), and it can exit 0
-# on failure - so success is judged by the server exe existing, not the exit
-# code. Retry with the appcache cleared and an explicit appinfo refresh.
-steam_update_with_retry() {
+steam_update_until_exe() {
     local attempt
-    for attempt in 1 2 3; do
-        if [ "$attempt" -gt 1 ]; then
-            LogWarn "steamcmd attempt $((attempt - 1)) did not produce $SERVER_EXE; clearing appcache and retrying"
-            rm -rf /home/steam/Steam/appcache
-            steam_update +app_info_update 1
-        else
-            steam_update
-        fi
+    for attempt in 1 2; do
+        steamcmd_update "$STEAMAPPID" validate || true
         [ -f "$SERVER_EXE" ] && return 0
+        if [ "$attempt" = 1 ]; then
+            LogWarn "steamcmd finished but $SERVER_EXE is missing; clearing appcache and retrying"
+            rm -rf "$HOME/Steam/appcache"
+        fi
     done
-    LogError "steamcmd failed to install app $STEAMAPPID after 3 attempts"
     return 1
 }
 
 if [ "$SKIPUPDATE" != "true" ]; then
     LogAction "Installing/updating Palworld Windows build (app id $STEAMAPPID)"
-    steam_update_with_retry
+    steam_update_until_exe
 elif [ ! -f "$SERVER_EXE" ]; then
     LogWarn "SKIPUPDATE=true but the server binary is missing; installing anyway"
-    steam_update_with_retry
+    steam_update_until_exe
 else
     LogWarn "SKIPUPDATE=true, not updating the game"
 fi
