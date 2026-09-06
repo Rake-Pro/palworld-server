@@ -9,8 +9,8 @@ ARG WINE_VERSION=11.0.0.0~bookworm-1
 # Root only for the apt layers - runtime user stays steam.
 USER root
 
-# House lesson: bookworm-slim base layers go stale; without an upgrade pass
-# old gnutls/openssl CRITICALs fail the Trivy gate.
+# House lesson: base image layers go stale between rebuilds; without an
+# upgrade pass old gnutls/openssl CRITICALs fail the Trivy gate.
 RUN apt-get update && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       unzip \
@@ -58,9 +58,12 @@ RUN mkdir -pm755 /etc/apt/keyrings \
  && dpkg -s winbind > /dev/null \
  && rm -rf /var/lib/apt/lists/*
 
-# Palworld dedicated server app id (Windows depot pulled via
-# +@sSteamCmdForcePlatformType windows in init.sh)
+# Palworld dedicated server app id. STEAM_PLATFORM_TYPE=windows tells the
+# base image's steamcmd_update/steamcmd_run helpers to force the Windows
+# depot (+@sSteamCmdForcePlatformType) before login, since this image runs
+# the Windows build under Wine.
 ENV STEAMAPPID=2394010 \
+    STEAM_PLATFORM_TYPE=windows \
     INSTALL_DIR=/palworld \
     SKIPUPDATE=false \
     SERVER_NAME="Palworld Server" \
