@@ -10,18 +10,33 @@ install. Published to GitHub Container Registry:
 ghcr.io/rake-pro/palworld-server
 ```
 
+## Base image
+
+| Item | Value |
+| --- | --- |
+| Base | `ghcr.io/rake-pro/steamcmd-base:latest` (SteamCMD, the `steam` user, `gosu`, shared `/opt/scripts/functions.sh` helpers) |
+| Runtime user | `steam` (nonroot) for the whole boot |
+| Extra packages | `unzip`, `xvfb`, `winbind`, `cabextract`, `wget`, `winehq-stable` (pinned), `winetricks` (pinned upstream script) |
+
 ## Tags / releases
 
-CI (`.github/workflows/build.yml`) versions the image as semver:
+| Tag | Meaning |
+| --- | --- |
+| `X.Y.Z` | Immutable release, built from git tag `vX.Y.Z` |
+| `X.Y` | Latest patch of that minor |
+| `latest` | Latest release |
+| `sha-<short>` | Commit the image was built from |
 
-- Every push to `main` mints a patch-bumped `vX.Y.Z` git tag (`#major` /
-  `#minor` in the commit message bump those segments) and pushes
-  `vX.Y.Z` + `latest` to GHCR. No `sha-` tags on main builds.
-- The version tag and the image push happen only after the Trivy scan gate
-  passes (blocking on fixable CRITICALs; a HIGH+CRITICAL report also runs,
-  non-blocking).
-- PR builds are build+scan only (short-sha tag, never pushed).
-- Pin `vX.Y.Z` in deployments; `latest` is a convenience pointer.
+- `dev` is the integration branch (default); `ci.yml` builds on every push and PR
+  and publishes `:dev` / `:dev-<sha>` images on pushes to `dev`.
+- `sync-main.yml` opens a promotion PR from `dev` to `main`. Merging it (merge
+  commit) mints the next patch tag and `release.yml` builds, pushes and
+  Trivy-scans the image (blocking on fixable CRITICALs).
+- Label the promotion PR `release:minor` or `release:major` to change the bump.
+- `trivy-rescan.yml` re-scans the currently released image weekly
+  (CRITICAL+HIGH) so CVEs disclosed after release still surface; it does not
+  rebuild or push anything.
+- Pin `X.Y.Z` in deployments; `latest` is a convenience pointer.
 
 ## Run
 
@@ -46,9 +61,9 @@ Xvfb display is started for Wine; the server itself is headless).
 The install/update itself runs through the `steamcmd-base` image's
 `steamcmd_update` helper, which retries automatically (clearing the SteamCMD
 appcache between attempts) if the first pull of the platform-forced depot
-fails - see the `steamcmd-base` README for the retry/env details.
+fails; see the `steamcmd-base` README for the retry/env details.
 
-`ADMIN_PASSWORD` is required and has no default - it is the in-game admin
+`ADMIN_PASSWORD` is required and has no default: it is the in-game admin
 password and the HTTP basic-auth secret for the REST API. The container
 exits with an error at boot if it is unset.
 
@@ -72,7 +87,7 @@ init script only rewrites the keys it manages (see below) inside the
 | `PUBLIC_LOBBY` | `false` | | Register on the community server list (`-publiclobby`). |
 | `PUBLIC_IP` | (empty) | | Advertised public IP (`PublicIP` + `-publicip`). |
 | `PUBLIC_PORT` | (empty) | | Advertised public port (`PublicPort` + `-publicport`); empty = `GAME_PORT`. |
-| `RESTAPI_ENABLED` | `true` | | Enable the REST admin API (`RESTAPIEnabled`). HTTP basic auth with `ADMIN_PASSWORD`; plain HTTP, LAN-only by design - do not expose it to the internet. |
+| `RESTAPI_ENABLED` | `true` | | Enable the REST admin API (`RESTAPIEnabled`). HTTP basic auth with `ADMIN_PASSWORD`; plain HTTP, LAN-only by design; do not expose it to the internet. |
 | `RESTAPI_PORT` | `8212` | | REST API port (`RESTAPIPort`). |
 | `ENABLE_INVADER_ENEMY` | `true` | | `bEnableInvaderEnemy` passthrough. Community reports disabling it roughly halves the server's memory-leak growth. |
 | `UE4SS_ENABLED` | `true` | | Install/upgrade UE4SS at boot. |
@@ -116,7 +131,7 @@ community convention). Prefix an entry with `logicmods:` to target
 
 Reconciliation is declarative: entries removed from `MODS` are uninstalled
 on the next boot. The script tracks what it installed in
-`/palworld/.mods-manifest` and only ever deletes directories listed there -
+`/palworld/.mods-manifest` and only ever deletes directories listed there;
 mods you install by hand are never touched.
 
 ### UE4SS
@@ -132,7 +147,7 @@ The fork publishes exactly one release tag, `experimental-palworld` (the
 `UE4SS-Palworld.zip` asset in place as Palworld updates, so the tag string
 never changes while the bytes do. Because of that the image installs UE4SS
 **once** onto the persistent volume (recorded by a marker file) and then never
-auto-updates it - not even across image releases. Bumping `UE4SS_VERSION`
+auto-updates it, not even across image releases. Bumping `UE4SS_VERSION`
 alone does **not** refresh UE4SS (there is no newer tag to move to).
 
 **Game updates can break UE4SS** until the maintainer rebuilds that asset.
@@ -190,7 +205,7 @@ Example, installing PalSchema itself plus one of its sub-mods:
 Reconciled after `UE4SS_MODS` on every boot. If `PALSCHEMA_MODS` is set but
 PalSchema itself is not installed (missing from `UE4SS_MODS` or not yet
 downloaded), the init script logs a warning and still installs the sub-mod
-files - they are inert until PalSchema is present, so this is safe to leave
+files; they are inert until PalSchema is present, so this is safe to leave
 declared ahead of adding PalSchema.
 
 Like `UE4SS_MODS`, this requires `UE4SS_ENABLED=true`.
@@ -204,7 +219,7 @@ without needing to exec into the pod:
 
 | Prefix | File |
 | --- | --- |
-| `[ue4ss]` | `Pal/Binaries/Win64/ue4ss/UE4SS.log` - also carries PalSchema's output, since PalSchema is a UE4SS mod and logs through UE4SS's own logger rather than a separate file. |
+| `[ue4ss]` | `Pal/Binaries/Win64/ue4ss/UE4SS.log`; also carries PalSchema's output, since PalSchema is a UE4SS mod and logs through UE4SS's own logger rather than a separate file. |
 | `[pal]` | `Pal/Saved/Logs/PalServer.log` |
 
 Each tail uses `tail -F -n0`: `-F` follows by name and retries, so it is safe
@@ -212,3 +227,7 @@ to start before the file exists yet and survives log rotation; `-n0` skips
 replaying old content, so a restart does not flood the logs with history.
 Set `TAIL_GAME_LOGS=false` to disable and rely on the main server stdout
 only.
+
+## License
+
+MIT, see `LICENSE.md`.
